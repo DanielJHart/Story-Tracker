@@ -1,7 +1,12 @@
 /**
  * state.js
  * Single source of truth for all tracker data.
- * Exposes getState / setState and handles localStorage persistence.
+ *
+ * Two update paths:
+ *   saveState(s)  – persists to localStorage only, no DOM rebuild.
+ *                   Use this for text edits (keystrokes).
+ *   setState(s)   – persists AND re-renders the whole UI.
+ *                   Use this for structural changes (add/remove/reorder).
  */
 
 const STORAGE_KEY = 'story-tracker-v1';
@@ -18,38 +23,36 @@ const DEFAULT_STATE = {
 
 let _state = structuredClone(DEFAULT_STATE);
 
-/** Return a deep copy of the current state. */
+/** Return the live state object (not a clone — callers must not mutate carelessly). */
 function getState() {
-  return structuredClone(_state);
+  return _state;
 }
 
-/**
- * Replace the entire state, persist to localStorage, and re-render.
- * @param {object} newState
- */
+/** Persist only — no re-render. Use for keystroke-level updates. */
+function saveState(newState) {
+  _state = newState;
+  _persist();
+}
+
+/** Persist AND re-render. Use for structural changes. */
 function setState(newState) {
   _state = newState;
   _persist();
   render(); // defined in render.js
 }
 
-/** Persist current state to localStorage (best-effort). */
 function _persist() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(_state));
   } catch (e) {
-    console.warn('localStorage unavailable – changes will not persist between sessions.', e);
+    console.warn('localStorage unavailable.', e);
   }
 }
 
-/** Load state from localStorage, falling back to defaults. */
 function loadFromStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      _state = JSON.parse(raw);
-      return true;
-    }
+    if (raw) { _state = JSON.parse(raw); return true; }
   } catch (e) {
     console.warn('Could not parse saved state.', e);
   }
@@ -57,12 +60,10 @@ function loadFromStorage() {
   return false;
 }
 
-/** Generate a short random ID. */
 function uid() {
   return 'id' + Math.random().toString(36).slice(2, 9);
 }
 
-/** Escape HTML special characters. */
 function escHtml(s) {
   return (s || '')
     .replace(/&/g, '&amp;')
