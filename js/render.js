@@ -1,61 +1,75 @@
 /**
  * render.js
- * Builds the DOM from state. Full re-render only happens on structural
- * changes. Text edits update _state and localStorage without touching the DOM.
+ * Two-panel layout:
+ *   Left panel  – pinned time column, scrolls vertically only
+ *   Right panel – character columns, scrolls horizontally and vertically
+ *
+ * Vertical scroll is kept in sync between the two panels by mirroring
+ * the right-body scrollTop into the left-body scrollTop.
  */
 
-const TYPES = ['scene', 'chapter', 'note'];
+const TYPES      = ['scene', 'chapter', 'note'];
+const MIN_COL_W  = 120;   // px — narrowest a character column can go
+const DEF_COL_W  = 220;   // px — default width for new columns
 
-let _dragSrcId = null;
+let _dragSrcId   = null;
+let _syncBound   = false;   // vertical-sync listener attached once
+
+/* ── Helpers ───────────────────────────────────────────────────── */
 
 function autoResize(ta) {
   ta.style.height = 'auto';
   ta.style.height = ta.scrollHeight + 'px';
 }
 
+/* ── Top-level render ──────────────────────────────────────────── */
+
 function render() {
   renderHeader();
-  renderBody();
+  renderRows();
+  syncRowHeights();
+  bindVerticalSync();
 }
 
-// ── Header ──────────────────────────────────────────────────────────
+/* ── Header ────────────────────────────────────────────────────── */
 
 function renderHeader() {
   const state = getState();
-  const headerRow = document.getElementById('header-row');
-  headerRow.innerHTML = '';
-
-  const th0 = document.createElement('th');
-  th0.innerHTML = `<div class="th-inner"><i class="ti ti-clock" style="font-size:14px"></i> Time / Event</div>`;
-  headerRow.appendChild(th0);
+  const head  = document.getElementById('panel-right-head-inner');
+  head.innerHTML = '';
 
   state.characters.forEach(ch => {
-    const th = document.createElement('th');
-    th.innerHTML = `
-      <div class="th-inner">
-        <i class="ti ti-user-circle" style="font-size:15px;flex-shrink:0"></i>
-        <input class="char-name-input"
-               value="${escHtml(ch.name)}"
-               placeholder="Name…"
-               data-cid="${ch.id}" />
-        <button class="del-char" data-cid="${ch.id}" title="Remove character">
-          <i class="ti ti-x"></i>
-        </button>
-      </div>`;
-    headerRow.appendChild(th);
+    const w = _colWidth(ch.id);
+    const cell = document.createElement('div');
+    cell.className = 'char-header';
+    cell.dataset.cid = ch.id;
+    cell.style.width    = w + 'px';
+    cell.style.minWidth = w + 'px';
+    cell.style.maxWidth = w + 'px';
+    cell.innerHTML = `
+      <i class="ti ti-user-circle" style="font-size:15px;flex-shrink:0"></i>
+      <input class="char-name-input"
+             value="${escHtml(ch.name)}"
+             placeholder="Name…"
+             data-cid="${ch.id}" />
+      <button class="del-char" data-cid="${ch.id}" title="Remove character">
+        <i class="ti ti-x"></i>
+      </button>
+      <div class="col-resize-handle" data-cid="${ch.id}" title="Drag to resize column"></div>`;
+    head.appendChild(cell);
   });
 
-  // Character rename — saveState only, no re-render
-  headerRow.querySelectorAll('.char-name-input').forEach(inp => {
+  // Character rename — no re-render needed
+  head.querySelectorAll('.char-name-input').forEach(inp => {
     inp.addEventListener('input', e => {
-      const s = getState();
+      const s  = getState();
       const ch = s.characters.find(c => c.id === e.target.dataset.cid);
       if (ch) { ch.name = e.target.value; saveState(s); }
     });
   });
 
-  // Remove character — structural, needs re-render
-  headerRow.querySelectorAll('.del-char').forEach(btn => {
+  // Remove character — structural change
+  head.querySelectorAll('.del-char').forEach(btn => {
     btn.addEventListener('click', e => {
       if (getState().characters.length <= 1) {
         alert('You need at least one character column.');
@@ -63,111 +77,114 @@ function renderHeader() {
       }
       if (!confirm('Remove this character and all their data?')) return;
       const cid = e.currentTarget.dataset.cid;
-      const s = getState();
+      const s   = getState();
       s.characters = s.characters.filter(c => c.id !== cid);
       s.rows.forEach(r => delete r.cells[cid]);
-      setState(s); // re-render
+      setState(s);
     });
+  });
+
+  // Resize handles
+  head.querySelectorAll('.col-resize-handle').forEach(handle => {
+    handle.addEventListener('mousedown', _startColResize);
   });
 }
 
-// ── Body ─────────────────────────────────────────────────────────────
+/* ── Column width helpers ──────────────────────────────────────── */
 
-function renderBody() {
-  const state = getState();
-  const tbody = document.getElementById('tbody');
-  tbody.innerHTML = '';
+/** Return the stored width for a character column, or the default. */
+function _colWidth(cid) {
+  const s = getState();
+  return (s.colWidths && s.colWidths[cid]) || DEF_COL_W;
+}
+
+/** Apply a new pixel width to every DOM element belonging to column `cid`. */
+function _applyColWidth(cid, w) {
+  const px = w + 'px';
+  // Header cell
+  const header = document.querySelector(`.char-header[data-cid="${cid}"]`);
+  if (header) {
+    header.style.width    = px;
+    header.style.minWidth = px;
+    header.style.maxWidth = px;
+  }
+  // All body cells
+  document.querySelectorAll(`.char-cell[data-cid="${cid}"]`).forEach(cell => {
+    cell.style.width    = px;
+    cell.style.minWidth = px;
+    cell.style.maxWidth = px;
+  });
+}
+
+/* ── Column resize drag ────────────────────────────────────────── */
+
+function _startColResize(e) {
+  e.preventDefault();
+  const cid      = e.currentTarget.dataset.cid;
+  const startX   = e.clientX;
+  const startW   = _colWidth(cid);
+  const handle   = e.currentTarget;
+
+  handle.classList.add('resizing');
+  document.body.classList.add('col-resizing');
+
+  function onMove(e) {
+    const w = Math.max(MIN_COL_W, startW + (e.clientX - startX));
+    _applyColWidth(cid, w);
+    syncRowHeights();
+  }
+
+  function onUp(e) {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup',   onUp);
+    handle.classList.remove('resizing');
+    document.body.classList.remove('col-resizing');
+
+    // Persist the final width
+    const w = Math.max(MIN_COL_W, startW + (e.clientX - startX));
+    const s = getState();
+    if (!s.colWidths) s.colWidths = {};
+    s.colWidths[cid] = w;
+    saveState(s);
+  }
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup',   onUp);
+}
+
+/* ── Rows ──────────────────────────────────────────────────────── */
+
+function renderRows() {
+  const state     = getState();
+  const leftBody  = document.getElementById('panel-left-body');
+  const rightRows = document.getElementById('right-rows');
+
+  leftBody.innerHTML  = '';
+  rightRows.innerHTML = '';
 
   if (state.rows.length === 0) {
-    const tr = document.createElement('tr');
-    tr.className = 'empty-row';
-    tr.innerHTML = `<td colspan="${state.characters.length + 1}">No events yet — add one below.</td>`;
-    tbody.appendChild(tr);
+    leftBody.innerHTML  = '<div class="empty-state">No events yet.</div>';
+    rightRows.innerHTML = '<div class="empty-state">Add an event to get started.</div>';
     return;
   }
 
   state.rows.forEach((row, idx) => {
-    tbody.appendChild(_buildRow(row, idx, state));
+    leftBody.appendChild( _buildLeftRow(row, idx, state) );
+    rightRows.appendChild( _buildRightRow(row, state) );
   });
 
-  tbody.querySelectorAll('textarea').forEach(autoResize);
+  // Auto-resize all textareas
+  document.querySelectorAll('textarea').forEach(autoResize);
 }
 
-function _buildRow(row, idx, state) {
-  const tr = document.createElement('tr');
-  tr.dataset.rid = row.id;
-  tr.setAttribute('draggable', 'true');
+/* ── Left row (time cell) ──────────────────────────────────────── */
 
-  // Time cell
-  const tdTime = document.createElement('td');
-  tdTime.className = 'time-cell';
-  tdTime.appendChild(_buildTimeCell(row, idx, state));
-  tr.appendChild(tdTime);
+function _buildLeftRow(row, idx, state) {
+  const div = document.createElement('div');
+  div.className = 'left-row';
+  div.dataset.rid = row.id;
 
-  // Character cells
-  state.characters.forEach(ch => {
-    const td = document.createElement('td');
-    const inner = document.createElement('div');
-    inner.className = 'cell-inner';
-
-    const ta = document.createElement('textarea');
-    ta.placeholder = '—';
-    ta.dataset.rid = row.id;
-    ta.dataset.cid = ch.id;
-    ta.textContent = row.cells[ch.id] || '';
-
-    // saveState only — keeps focus
-    ta.addEventListener('input', e => {
-      autoResize(e.target);
-      const s = getState();
-      const r = s.rows.find(r => r.id === row.id);
-      if (r) { r.cells[ch.id] = e.target.value; saveState(s); }
-    });
-
-    inner.appendChild(ta);
-    td.appendChild(inner);
-    tr.appendChild(td);
-  });
-
-  // Drag & drop
-  tr.addEventListener('dragstart', e => {
-    _dragSrcId = row.id;
-    e.dataTransfer.effectAllowed = 'move';
-    setTimeout(() => tr.classList.add('dragging'), 0);
-  });
-  tr.addEventListener('dragend', () => {
-    tr.classList.remove('dragging');
-    _dragSrcId = null;
-  });
-  tr.addEventListener('dragover', e => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    document.querySelectorAll('tbody tr').forEach(r => r.classList.remove('drag-over'));
-    tr.classList.add('drag-over');
-  });
-  tr.addEventListener('dragleave', e => {
-    if (!tr.contains(e.relatedTarget)) tr.classList.remove('drag-over');
-  });
-  tr.addEventListener('drop', e => {
-    e.preventDefault();
-    tr.classList.remove('drag-over');
-    if (_dragSrcId && _dragSrcId !== row.id) {
-      const s = getState();
-      const from = s.rows.findIndex(r => r.id === _dragSrcId);
-      const to   = s.rows.findIndex(r => r.id === row.id);
-      const [moved] = s.rows.splice(from, 1);
-      s.rows.splice(to, 0, moved);
-      setState(s); // re-render (order changed)
-    }
-  });
-
-  return tr;
-}
-
-function _buildTimeCell(row, idx, state) {
-  const inner = document.createElement('div');
-  inner.className = 'cell-inner';
-
+  // Top: drag handle + type badge
   const top = document.createElement('div');
   top.className = 'time-top';
 
@@ -179,38 +196,38 @@ function _buildTimeCell(row, idx, state) {
 
   const badge = document.createElement('span');
   badge.className = `type-badge type-${row.type}`;
-  badge.dataset.rid = row.id;
   badge.title = 'Click to cycle type';
   badge.textContent = row.type;
-  // Type change updates the badge class in-place — no full re-render needed
   badge.addEventListener('click', () => {
     const s = getState();
     const r = s.rows.find(r => r.id === row.id);
     if (!r) return;
     r.type = TYPES[(TYPES.indexOf(r.type) + 1) % TYPES.length];
     saveState(s);
-    // Update just the badge, not the whole table
     badge.className = `type-badge type-${r.type}`;
     badge.textContent = r.type;
   });
   top.appendChild(badge);
-  inner.appendChild(top);
+  div.appendChild(top);
 
+  // Time textarea
   const ta = document.createElement('textarea');
+  ta.className = 'time-textarea';
   ta.placeholder = 'e.g. Chapter 3, dawn…';
   ta.dataset.rid = row.id;
   ta.dataset.field = 'time';
   ta.textContent = row.time || '';
-
-  // saveState only — keeps focus
   ta.addEventListener('input', e => {
     autoResize(e.target);
     const s = getState();
     const r = s.rows.find(r => r.id === row.id);
     if (r) { r.time = e.target.value; saveState(s); }
+    // Mirror height to the paired right row
+    _syncSingleRowHeight(row.id);
   });
-  inner.appendChild(ta);
+  div.appendChild(ta);
 
+  // Bottom: move buttons + delete
   const bottom = document.createElement('div');
   bottom.className = 'time-bottom';
 
@@ -219,7 +236,8 @@ function _buildTimeCell(row, idx, state) {
     b.className = `row-btn${cls ? ' ' + cls : ''}`;
     b.title = title;
     b.innerHTML = `<i class="ti ${icon}"></i>`;
-    if ((action === 'up' && idx === 0) || (action === 'down' && idx === state.rows.length - 1)) {
+    if ((action === 'up'   && idx === 0) ||
+        (action === 'down' && idx === state.rows.length - 1)) {
       b.disabled = true;
     }
     b.addEventListener('click', () => _handleRowAction(action, row.id));
@@ -232,13 +250,145 @@ function _buildTimeCell(row, idx, state) {
   spacer.style.marginLeft = 'auto';
   bottom.appendChild(spacer);
   bottom.appendChild(makeBtn('del', 'ti-trash', 'Delete row', 'danger'));
-  inner.appendChild(bottom);
+  div.appendChild(bottom);
 
-  return inner;
+  // Drag events on the left row div
+  _attachDragEvents(div, row.id);
+
+  return div;
 }
 
+/* ── Right row (character cells) ───────────────────────────────── */
+
+function _buildRightRow(row, state) {
+  const div = document.createElement('div');
+  div.className = 'right-row';
+  div.dataset.rid = row.id;
+
+  state.characters.forEach(ch => {
+    const w    = _colWidth(ch.id);
+    const cell = document.createElement('div');
+    cell.className      = 'char-cell';
+    cell.dataset.cid    = ch.id;
+    cell.style.width    = w + 'px';
+    cell.style.minWidth = w + 'px';
+    cell.style.maxWidth = w + 'px';
+
+    const ta = document.createElement('textarea');
+    ta.placeholder = '—';
+    ta.dataset.rid = row.id;
+    ta.dataset.cid = ch.id;
+    ta.textContent = row.cells[ch.id] || '';
+    ta.addEventListener('input', e => {
+      autoResize(e.target);
+      const s = getState();
+      const r = s.rows.find(r => r.id === row.id);
+      if (r) { r.cells[ch.id] = e.target.value; saveState(s); }
+      _syncSingleRowHeight(row.id);
+    });
+
+    cell.appendChild(ta);
+    div.appendChild(cell);
+  });
+
+  return div;
+}
+
+/* ── Row height sync ───────────────────────────────────────────── */
+
+/**
+ * After rendering, ensure every left-row and its paired right-row
+ * share the same height (the taller of the two).
+ */
+function syncRowHeights() {
+  const state = getState();
+  state.rows.forEach(row => _syncSingleRowHeight(row.id));
+}
+
+function _syncSingleRowHeight(rid) {
+  const leftRow  = document.querySelector(`#panel-left-body  [data-rid="${rid}"]`);
+  const rightRow = document.querySelector(`#right-rows       [data-rid="${rid}"]`);
+  if (!leftRow || !rightRow) return;
+
+  // Reset so we can measure natural heights
+  leftRow.style.minHeight  = '';
+  rightRow.style.minHeight = '';
+
+  const h = Math.max(leftRow.scrollHeight, rightRow.scrollHeight);
+  leftRow.style.minHeight  = h + 'px';
+  rightRow.style.minHeight = h + 'px';
+}
+
+/* ── Vertical scroll sync ──────────────────────────────────────── */
+
+function bindVerticalSync() {
+  if (_syncBound) return;
+  _syncBound = true;
+
+  const rightBody = document.getElementById('panel-right-body');
+  const leftBody  = document.getElementById('panel-left-body');
+
+  // Sync right → left
+  rightBody.addEventListener('scroll', () => {
+    leftBody.scrollTop = rightBody.scrollTop;
+    // Also sync the header horizontally
+    document.getElementById('panel-right-head').scrollLeft = rightBody.scrollLeft;
+  });
+}
+
+/* ── Drag & drop ───────────────────────────────────────────────── */
+
+function _attachDragEvents(el, rid) {
+  el.setAttribute('draggable', 'true');
+
+  el.addEventListener('dragstart', e => {
+    _dragSrcId = rid;
+    e.dataTransfer.effectAllowed = 'move';
+    setTimeout(() => {
+      el.classList.add('dragging');
+      const rr = document.querySelector(`#right-rows [data-rid="${rid}"]`);
+      if (rr) rr.style.opacity = '0.35';
+    }, 0);
+  });
+
+  el.addEventListener('dragend', () => {
+    el.classList.remove('dragging');
+    el.style.opacity = '';
+    const rr = document.querySelector(`#right-rows [data-rid="${rid}"]`);
+    if (rr) rr.style.opacity = '';
+    _dragSrcId = null;
+  });
+
+  el.addEventListener('dragover', e => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    // Clear all drag-over states first
+    document.querySelectorAll('.left-row').forEach(r => r.classList.remove('drag-over'));
+    el.classList.add('drag-over');
+  });
+
+  el.addEventListener('dragleave', e => {
+    if (!el.contains(e.relatedTarget)) el.classList.remove('drag-over');
+  });
+
+  el.addEventListener('drop', e => {
+    e.preventDefault();
+    el.classList.remove('drag-over');
+    if (_dragSrcId && _dragSrcId !== rid) {
+      const s    = getState();
+      const from = s.rows.findIndex(r => r.id === _dragSrcId);
+      const to   = s.rows.findIndex(r => r.id === rid);
+      const [moved] = s.rows.splice(from, 1);
+      s.rows.splice(to, 0, moved);
+      setState(s);
+    }
+  });
+}
+
+/* ── Row actions ───────────────────────────────────────────────── */
+
 function _handleRowAction(action, rid) {
-  const s = getState();
+  const s   = getState();
   const idx = s.rows.findIndex(r => r.id === rid);
 
   if (action === 'up' && idx > 0) {

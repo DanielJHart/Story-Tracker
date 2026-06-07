@@ -25,20 +25,35 @@
     </div>
   </header>
 
-  <div class="grid-wrap">
-    <table id="tracker-table">
-      <thead><tr id="header-row"></tr></thead>
-      <tbody id="tbody"></tbody>
-    </table>
-    <div class="add-row-wrap">
-      <button class="add-row-btn" id="add-row-bottom">
-        <i class="ti ti-plus"></i> Add event / moment
-      </button>
+  <!-- Two-panel grid -->
+  <div id="grid-outer">
+
+    <!-- LEFT: pinned time column -->
+    <div id="panel-left">
+      <div class="col-header">
+        <i class="ti ti-clock" style="font-size:13px"></i> Time / Event
+      </div>
+      <div id="panel-left-body"></div>
     </div>
+
+    <!-- RIGHT: scrollable character columns -->
+    <div id="panel-right">
+      <div id="panel-right-head">
+        <div id="panel-right-head-inner"></div>
+      </div>
+      <div id="panel-right-body">
+        <div id="right-rows"></div>
+        <div class="add-row-wrap">
+          <button class="add-row-btn" id="add-row-bottom">
+            <i class="ti ti-plus"></i> Add event / moment
+          </button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>
 
-<!-- Toast notification -->
 <div id="toast" class="toast" aria-live="polite"></div>
 
 <script src="js/state.js"></script>
