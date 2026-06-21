@@ -25,32 +25,25 @@
     </div>
   </header>
 
-  <!-- Two-panel grid -->
+  <!--
+    Single scroll container. The left column is position:sticky so it
+    stays on screen while the whole table scrolls together.
+  -->
   <div id="grid-outer">
-
-    <!-- LEFT: pinned time column -->
-    <div id="panel-left">
-      <div class="col-header">
+    <div id="grid-head">
+      <div id="head-time-cell">
         <i class="ti ti-clock" style="font-size:13px"></i> Time / Event
       </div>
-      <div id="panel-left-body"></div>
+      <div id="head-chars"></div>
     </div>
-
-    <!-- RIGHT: scrollable character columns -->
-    <div id="panel-right">
-      <div id="panel-right-head">
-        <div id="panel-right-head-inner"></div>
-      </div>
-      <div id="panel-right-body">
-        <div id="right-rows"></div>
-        <div class="add-row-wrap">
-          <button class="add-row-btn" id="add-row-bottom">
-            <i class="ti ti-plus"></i> Add event / moment
-          </button>
-        </div>
-      </div>
+    <div id="grid-body">
+      <!-- rows injected here by render.js -->
     </div>
-
+    <div class="add-row-wrap">
+      <button class="add-row-btn" id="add-row-bottom">
+        <i class="ti ti-plus"></i> Add event / moment
+      </button>
+    </div>
   </div>
 </div>
 

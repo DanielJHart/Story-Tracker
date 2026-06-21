@@ -12,18 +12,25 @@
   --text-2:       #5a5650;
   --text-3:       #9a948c;
 
+  /* Type colours — bg is used for row tinting */
   --scene-bg:     #EAF3DE; --scene-fg:   #3B6D11; --scene-bd:   #97C459;
   --chapter-bg:   #E6F1FB; --chapter-fg: #185FA5; --chapter-bd: #85B7EB;
   --note-bg:      #FAEEDA; --note-fg:    #854F0B;  --note-bd:    #EF9F27;
 
+  /* Tinted row background — lighter than the badge bg */
+  --scene-row:    #f4f9ee;
+  --chapter-row:  #f0f6fd;
+  --note-row:     #fdf6eb;
+
   --toast-bg:     #232220;
   --toast-fg:     #f0ede8;
 
-  --col-time:     220px;   /* width of the locked left column   */
-  --col-char:     220px;   /* fixed width of every char column  */
+  --col-time:     220px;
+  --col-char:     220px;
+  --min-col-char: 120px;
   --row-min:      88px;
   --radius:       8px;
-  --shadow-pin:   4px 0 12px rgba(0,0,0,0.07);
+  --shadow-pin:   2px 0 8px rgba(0,0,0,0.08);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -41,9 +48,13 @@
     --chapter-bg: #0C447C; --chapter-fg: #B5D4F4; --chapter-bd: #378ADD;
     --note-bg:    #633806; --note-fg:    #FAC775; --note-bd:    #BA7517;
 
+    --scene-row:   #1e3a0a;
+    --chapter-row: #0a2e52;
+    --note-row:    #3b1f02;
+
     --toast-bg:   #f0ede8;
     --toast-fg:   #1c1a17;
-    --shadow-pin: 4px 0 12px rgba(0,0,0,0.3);
+    --shadow-pin: 2px 0 8px rgba(0,0,0,0.4);
   }
 }
 
@@ -126,145 +137,140 @@ button:hover    { background: var(--surface2); }
 button:disabled { opacity: 0.35; cursor: default; }
 
 /* ══════════════════════════════════════════════════════════════
-   TWO-PANEL LAYOUT
-   Left panel  = pinned time column (fixed width, no h-scroll)
-   Right panel = character columns (scrolls horizontally)
-   Both panels share vertical scroll via #scroll-sync
+   GRID LAYOUT
+   ──────────────────────────────────────────────────────────────
+   #grid-outer   overflow:auto  → single scroll container
+   #grid-head    sticky top:0   → column headers stay visible
+   #grid-body                   → rows
+
+   Inside each header / row:
+     .time-cell   position:sticky left:0  → pinned left column
+     .char-cols                           → scrolls with the rest
    ══════════════════════════════════════════════════════════════ */
 
-/* Outer container fills remaining viewport height */
 #grid-outer {
   flex: 1;
-  display: flex;
-  overflow: hidden;          /* children manage their own scroll */
+  overflow: auto;
+  position: relative;
 }
 
-/* ── Left panel (pinned) ──────────────────────────────────────── */
-#panel-left {
+/* ── Sticky header row ────────────────────────────────────────── */
+#grid-head {
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border-mid);
+  min-width: max-content;   /* stretches to match body width */
+}
+
+#head-time-cell {
   flex-shrink: 0;
   width: var(--col-time);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  /* Shadow casts rightward to signal the panel is pinned */
-  box-shadow: var(--shadow-pin);
-  z-index: 10;
-  background: var(--bg);
-}
-
-#panel-left .col-header {
-  flex-shrink: 0;
-  height: 40px;              /* matches right-panel header height */
+  min-width: var(--col-time);
+  height: 40px;
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 0 12px;
-  background: var(--surface2);
-  border-bottom: 1px solid var(--border-mid);
-  border-right: 1px solid var(--border-mid);
   font-size: 11px;
   letter-spacing: 0.4px;
   text-transform: uppercase;
   color: var(--text-3);
-}
-
-/* The left body scrolls vertically only, no scrollbar shown */
-#panel-left-body {
-  flex: 1;
-  overflow-y: scroll;
-  overflow-x: hidden;
-  scrollbar-width: none;     /* Firefox */
-}
-#panel-left-body::-webkit-scrollbar { display: none; }
-
-/* Each time-cell row in the left panel */
-.left-row {
-  width: var(--col-time);
-  min-height: var(--row-min);
-  border-bottom: 1px solid var(--border);
   border-right: 1px solid var(--border-mid);
-  background: var(--surface);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
-  transition: background 0.08s;
-}
-.left-row:hover { background: var(--surface2); }
-
-.left-row.drag-over {
-  background: var(--chapter-bg) !important;
-  outline: 2px dashed var(--chapter-bd);
-  outline-offset: -2px;
-}
-.left-row.dragging { opacity: 0.35; }
-
-/* ── Right panel (scrollable) ─────────────────────────────────── */
-#panel-right {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-/* Right panel header scrolls horizontally with the body */
-#panel-right-head {
-  flex-shrink: 0;
-  overflow: hidden;          /* header hides its own scrollbar */
+  /* Pinned — stays at left edge while header scrolls */
+  position: sticky;
+  left: 0;
   background: var(--surface2);
-  border-bottom: 1px solid var(--border-mid);
+  z-index: 2;
+  box-shadow: var(--shadow-pin);
 }
 
-#panel-right-head-inner {
+#head-chars {
   display: flex;
-  /* width set by JS to match body scroll width */
-}
-
-/* Right panel body: the main scroll area */
-#panel-right-body {
-  flex: 1;
-  overflow: auto;
 }
 
 /* Character column header cell */
 .char-header {
   flex-shrink: 0;
   width: var(--col-char);
+  min-width: var(--col-char);
   height: 40px;
   display: flex;
   align-items: center;
   gap: 7px;
   padding: 0 12px;
   border-right: 1px solid var(--border);
+  position: relative;         /* for resize handle */
+  background: var(--surface2);
 }
 .char-header:last-child { border-right: none; }
 
-/* Character rows container — one row = flex of cells */
-.right-rows {
-  display: flex;
-  flex-direction: column;
+/* ── Grid body rows ───────────────────────────────────────────── */
+#grid-body {
+  min-width: max-content;
 }
 
-.right-row {
+.grid-row {
   display: flex;
   min-height: var(--row-min);
   border-bottom: 1px solid var(--border);
+  /* Default (unstyled) background */
+  background: var(--surface);
 }
-.right-row:hover .char-cell { background: var(--surface2); }
 
-/* Individual character cell */
+/* Type-tinted row backgrounds */
+.grid-row.type-scene   { background: var(--scene-row); }
+.grid-row.type-chapter { background: var(--chapter-row); }
+.grid-row.type-note    { background: var(--note-row); }
+
+/* Hover darkens the tint slightly */
+.grid-row:hover { filter: brightness(0.97); }
+
+/* ── Time cell (sticky left) ──────────────────────────────────── */
+.time-cell {
+  flex-shrink: 0;
+  width: var(--col-time);
+  min-width: var(--col-time);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-right: 1px solid var(--border-mid);
+  /* Pinned */
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  /* Background inherits row tint via background:inherit */
+  background: inherit;
+  box-shadow: var(--shadow-pin);
+}
+
+/* ── Character cells ──────────────────────────────────────────── */
 .char-cell {
   flex-shrink: 0;
   width: var(--col-char);
-  border-right: 1px solid var(--border);
+  min-width: var(--col-char);
   padding: 8px 10px;
+  border-right: 1px solid var(--border);
   display: flex;
   align-items: flex-start;
-  transition: background 0.08s;
+  /* Background inherits row tint */
+  background: inherit;
 }
 .char-cell:last-child { border-right: none; }
 
-/* ── Shared cell content ──────────────────────────────────────── */
+/* ── Drag / drop states ───────────────────────────────────────── */
+.grid-row.dragging { opacity: 0.35; }
+
+.grid-row.drag-over {
+  outline: 2px dashed var(--chapter-bd);
+  outline-offset: -2px;
+  filter: brightness(0.94);
+}
+
+/* ── Time cell internals ──────────────────────────────────────── */
 .time-top {
   display: flex;
   align-items: center;
@@ -300,7 +306,7 @@ textarea::placeholder { color: var(--text-3); }
   font-style: italic;
 }
 
-/* ── Inputs (char name) ───────────────────────────────────────── */
+/* ── Character name input ─────────────────────────────────────── */
 .char-name-input {
   background: transparent;
   border: none;
@@ -388,6 +394,26 @@ textarea::placeholder { color: var(--text-3); }
   .row-btn.danger:hover { background: #501313; }
 }
 
+/* ── Column resize handle ─────────────────────────────────────── */
+.col-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+  background: transparent;
+  transition: background 0.15s;
+}
+.col-resize-handle:hover,
+.col-resize-handle.resizing { background: var(--border-mid); }
+
+body.col-resizing {
+  user-select: none;
+  cursor: col-resize;
+}
+
 /* ── Empty state ──────────────────────────────────────────────── */
 .empty-state {
   padding: 3rem 1rem;
@@ -448,31 +474,3 @@ textarea::placeholder { color: var(--text-3); }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 4px; }
 ::-webkit-scrollbar-corner { background: transparent; }
-
-/* ── Column resize handle ─────────────────────────────────────── */
-.char-header {
-  position: relative;   /* anchor for the absolute handle */
-}
-
-.col-resize-handle {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 5px;
-  height: 100%;
-  cursor: col-resize;
-  z-index: 5;
-  /* Faint visual indicator */
-  background: transparent;
-  transition: background 0.15s;
-}
-.col-resize-handle:hover,
-.col-resize-handle.resizing {
-  background: var(--border-mid);
-}
-
-/* While any resize is active, freeze text selection everywhere */
-body.col-resizing {
-  user-select: none;
-  cursor: col-resize;
-}

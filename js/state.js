@@ -18,12 +18,13 @@ const DEFAULT_STATE = {
   ],
   rows: [
     { id: 'r1', time: '', type: 'scene', cells: {} }
-  ]
+  ],
+  colWidths: {}
 };
 
 let _state = structuredClone(DEFAULT_STATE);
 
-/** Return the live state object (not a clone — callers must not mutate carelessly). */
+/** Return the live state object. */
 function getState() {
   return _state;
 }
@@ -38,7 +39,7 @@ function saveState(newState) {
 function setState(newState) {
   _state = newState;
   _persist();
-  render(); // defined in render.js
+  render();
 }
 
 function _persist() {
@@ -52,7 +53,11 @@ function _persist() {
 function loadFromStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) { _state = JSON.parse(raw); return true; }
+    if (raw) {
+      _state = JSON.parse(raw);
+      if (!_state.colWidths) _state.colWidths = {};
+      return true;
+    }
   } catch (e) {
     console.warn('Could not parse saved state.', e);
   }
